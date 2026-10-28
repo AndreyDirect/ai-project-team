@@ -2,7 +2,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).parent
 
-MODEL = "openai/gpt-oss-20b"
+MODEL = "openai/gpt-oss-120b"
 
 BRIEF_FILE = ROOT / "project_brief.txt"
 OUTPUT_DIR = ROOT / "output"

@@ -1,5 +1,6 @@
-from pathlib import Path
+import json
 from datetime import datetime
+from pathlib import Path
 
 from config import BRIEF_FILE, OUTPUT_DIR
 
@@ -24,4 +25,22 @@ def create_run_dir() -> Path:
 def save_file(run_dir: Path, filename: str, content: str) -> Path:
     path = run_dir / filename
     path.write_text(content, encoding="utf-8")
+    return path
+
+
+def save_run_log(run_dir, data):
+    log = {
+        "run_id": run_dir.name,
+        "created_at": datetime.now().isoformat(),
+        "model": data.get("model"),
+        "status": data.get("status"),
+        "artifacts": data.get("artifacts", []),
+        "errors": data.get("errors", [])
+    }
+
+    path = run_dir / "run_log.json"
+
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(log, f, ensure_ascii=False, indent=2)
+
     return path

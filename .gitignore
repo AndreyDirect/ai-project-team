@@ -4,3 +4,21 @@ __pycache__/
 *.pyc
 .env
 .streamlit/secrets.toml
+
+# Локальные документы и результаты
+/FAQ2*.txt
+/knowledge/
+/output/
+/run_log.json
+
+# Секреты
+.env
+.env.*
+!.env.example
+.streamlit/secrets.toml
+
+# Окружение и служебные файлы
+.venv/
+venv/
+__pycache__/
+*.py[cod]
