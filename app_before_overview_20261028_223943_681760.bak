@@ -1,0 +1,470 @@
+from history_view import render_history
+from zip_export import show_run_export
+from pathlib import Path
+import hashlib
+import json
+import os
+import tempfile
+from datetime import datetime, timezone, timedelta
+import streamlit as st
+import streamlit.components.v1 as components
+from config import MODEL
+from llm import ask
+from pipeline import start_project, resume_project, inspect_resume
+from knowledge import save_uploaded_file, list_knowledge_files, search_knowledge
+from storage import create_run_dir, save_file, save_run_log, list_runs, load_run_text, HISTORY_FILES
+from prompts import (
+    PM_ROLE, PM_TASK, ANALYST_ROLE, ANALYST_TASK, ARCHITECT_ROLE,
+    ARCHITECT_TASK, WRITER_ROLE, WRITER_TASK, REVIEWER_ROLE, REVIEWER_TASK,
+)
+
+st.set_page_config(page_title="AI Project Team", page_icon="🤖", layout="wide")
+st.title("🤖 AI Project Team")
+st.caption(f"План, анализ, архитектура, документ и проверка. Модель: {MODEL}")
+for key, value in {
+    "result": None, "run_dir": None, "kb_edit": None, "kb_delete": None,
+    "kb_notice": None, "kb_scroll": False,
+}.items():
+    if key not in st.session_state:
+        st.session_state[key] = value
+
+
+def start_edit(name):
+    st.session_state.kb_edit = name
+    st.session_state.kb_delete = None
+    st.session_state.kb_scroll = True
+    st.session_state.pop("kb_editor_text", None)
+
+
+def start_delete(name):
+    st.session_state.kb_delete = name
+
+
+def clear_edit():
+    st.session_state.kb_edit = None
+    st.session_state.kb_scroll = False
+    st.session_state.pop("kb_editor_text", None)
+
+
+def clear_delete():
+    st.session_state.kb_delete = None
+
+
+def version(path):
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def scroll_to_editor():
+    components.html(
+        """<script>
+        (() => {
+          let attempts = 0;
+          const timer = setInterval(() => {
+            attempts += 1;
+            try {
+              const doc = window.parent.document;
+              const anchor = doc.getElementById('kb-editor-anchor');
+              if (anchor && anchor.getClientRects().length) {
+                anchor.scrollIntoView({behavior: 'smooth', block: 'start'});
+                clearInterval(timer);
+              }
+            } catch (error) { clearInterval(timer); }
+            if (attempts >= 30) clearInterval(timer);
+          }, 100);
+        })();
+        </script>""",
+        height=0,
+    )
+
+
+@st.dialog("Удаление документа", dismissible=False)
+def delete_dialog(name, path):
+    st.write(f"Удалить документ «{name}» из базы знаний?")
+    st.warning("Файл будет удалён с диска без корзины. Отменить удаление нельзя.")
+    st.caption("Ранее созданные отчёты и сохранённые материалы запусков останутся.")
+    yes, no = st.columns(2)
+    if yes.button("Да, удалить", type="primary", use_container_width=True):
+        try:
+            if path is not None:
+                path.unlink(missing_ok=True)
+        except OSError as exc:
+            st.error(f"Не удалось удалить документ: {exc}")
+        else:
+            if st.session_state.kb_edit == name:
+                clear_edit()
+            clear_delete()
+            st.session_state.kb_notice = f"Документ удалён: {name}"
+            st.rerun()
+    if no.button("Отмена", use_container_width=True):
+        clear_delete()
+        st.rerun()
+
+
+def read_feedback(run_dir):
+    path = Path(run_dir) / "feedback.json"
+    if not path.exists():
+        return {}
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        raise ValueError("feedback.json должен содержать JSON-объект.")
+    return data
+
+
+def write_feedback(run_dir, rating, comment, previous):
+    if rating not in {"useful", "needs_revision"}:
+        raise ValueError("Выберите оценку результата.")
+    folder = Path(run_dir)
+    if not folder.is_dir():
+        raise FileNotFoundError("Папка запуска не найдена. Оценка не сохранена.")
+    now = datetime.now(timezone.utc).isoformat()
+    payload = {
+        "schema_version": 1,
+        "run_id": folder.name,
+        "rating": rating,
+        "comment": comment.strip(),
+        "created_at": previous.get("created_at") or now,
+        "updated_at": now,
+    }
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", dir=folder,
+            prefix=".feedback_", suffix=".tmp", delete=False,
+        ) as handle:
+            temporary = Path(handle.name)
+            json.dump(payload, handle, ensure_ascii=False, indent=2)
+            handle.write("\n")
+        os.replace(temporary, folder / "feedback.json")
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+    return payload
+
+
+def show_feedback(run_dir):
+    folder = Path(run_dir)
+    st.divider()
+    st.subheader("Оценка результата")
+    st.caption(f"Запуск: {folder.name}. Сохранение оценки не запускает агентов повторно.")
+    try:
+        previous = read_feedback(folder)
+    except (OSError, ValueError) as exc:
+        st.error(f"Не удалось прочитать сохранённую оценку: {exc}")
+        st.caption("Исправьте файл feedback.json или восстановите его из копии. Он не будет перезаписан автоматически.")
+        return
+    suffix = hashlib.sha256(str(folder.resolve()).encode("utf-8")).hexdigest()[:16]
+    options = ["Не выбрано", "👍 Полезно", "👎 Требует доработки"]
+    codes = {"👍 Полезно": "useful", "👎 Требует доработки": "needs_revision"}
+    selected = {"useful": 1, "needs_revision": 2}.get(previous.get("rating"), 0)
+    with st.form("feedback_form_" + suffix):
+        choice = st.radio("Насколько полезен результат?", options,
+                          index=selected, key="feedback_rating_" + suffix)
+        comment = st.text_area(
+            "Что исправить или улучшить?",
+            value=str(previous.get("comment", "")),
+            placeholder="Необязательно: что полезно, чего не хватает, где есть ошибка.",
+            key="feedback_comment_" + suffix,
+        )
+        submitted_feedback = st.form_submit_button("Сохранить оценку", type="primary")
+    if submitted_feedback:
+        if choice not in codes:
+            st.warning("Сначала выберите «Полезно» или «Требует доработки».")
+        else:
+            try:
+                previous = write_feedback(folder, codes[choice], comment, previous)
+            except (OSError, ValueError) as exc:
+                st.error(f"Не удалось сохранить оценку: {exc}")
+            else:
+                st.success("Оценка сохранена. Повторное сохранение обновляет её без создания дубликатов.")
+    if previous:
+        label = {"useful": "Полезно", "needs_revision": "Требует доработки"}.get(
+            previous.get("rating"), "Неизвестная оценка")
+        st.caption(f"Сохранённая оценка: {label}. Обновлено: {previous.get('updated_at', 'не указано')} (UTC).")
+
+
+def history_run_date(row):
+    raw = str(row.get("created_at") or "")
+    try:
+        return datetime.fromisoformat(raw.replace("Z", "+00:00")).date()
+    except ValueError:
+        try:
+            return datetime.strptime(str(row.get("run_id", ""))[4:14], "%Y-%m-%d").date()
+        except ValueError:
+            return None
+
+
+def filter_history(rows, query, status_filter, period, today):
+    labels = {"completed": "Завершён", "failed": "Ошибка", "running": "Выполняется", "unknown": "Нет статуса"}
+    start = {"Сегодня": today, "Последние 7 дней": today - timedelta(days=6),
+             "Последние 30 дней": today - timedelta(days=29)}.get(period)
+    found = []
+    for row in rows:
+        haystack = (str(row.get("project_name", "")) + " " + str(row.get("run_id", ""))).casefold()
+        if query.strip().casefold() not in haystack:
+            continue
+        if status_filter != "Все" and labels.get(row.get("status"), "Нет статуса") != status_filter:
+            continue
+        day = history_run_date(row)
+        if start is not None and (day is None or not start <= day <= today):
+            continue
+        found.append(row)
+    return sorted(found, key=lambda r: (history_run_date(r) or datetime.min.date(), r['run_id']), reverse=True)
+
+
+def change_history_page(delta, total):
+    current = st.session_state.get("history_page", 1)
+    st.session_state.history_page = min(total, max(1, current + delta))
+
+
+def show_history_details(selected_run, row):
+    labels = {"completed": "Завершён", "failed": "Ошибка", "running": "Выполняется", "unknown": "Нет статуса"}
+    st.divider()
+    st.subheader("Выбранный запуск: " + row['project_name'])
+    st.caption(f"Папка: {selected_run} · Модель: {row['model']} · Статус: {labels.get(row['status'], 'Нет статуса')}")
+    show_run_export(selected_run)
+    for warning in row['warnings']:
+        st.warning(warning)
+    if row['errors']:
+        with st.expander("История ошибок"):
+            for error in row['errors']:
+                st.write(str(error))
+    if row['status'] != "completed":
+        st.markdown("### Продолжение запуска")
+        try:
+            state = inspect_resume(selected_run)
+        except (OSError, ValueError, TypeError, KeyError) as exc:
+            st.warning(f"Продолжение недоступно: {exc}")
+        else:
+            st.caption(f"Готово этапов: {len(state['result'])}/5. Модель: {state['model']}. Готовые документы не перезаписываются.")
+            acknowledged = False
+            for warning in state['warnings']:
+                st.warning(warning)
+            if state['warnings']:
+                acknowledged = st.checkbox("Подтверждаю продолжение с указанными ограничениями старого запуска", key="legacy_" + selected_run)
+            if row['status'] == "running":
+                st.caption("Защита не позволит продолжить запуск, пока он выполняется в другом сеансе.")
+            if st.button("▶️ Продолжить запуск", type="primary", key="resume_" + selected_run,
+                         disabled=bool(state['warnings']) and not acknowledged):
+                progress_box = st.empty()
+                try:
+                    outcome = resume_project(
+                        selected_run, acknowledge_legacy=acknowledged,
+                        progress=lambda n, label: progress_box.info(f"{n}/5 — работает {label}..."),
+                    )
+                    st.session_state.result = outcome['result']
+                    st.session_state.run_dir = outcome['run_dir']
+                except Exception as exc:
+                    st.error(f"Не удалось продолжить: {exc}")
+                else:
+                    if outcome['status'] == "completed":
+                        st.session_state.resume_notice = "Запуск завершён. Документы и журнал обновлены в той же папке."
+                        st.rerun()
+                    else:
+                        st.error(outcome['error'] or "Ошибка продолжения.")
+                        st.info("Готовые результаты сохранены. Обновите список, чтобы увидеть актуальный статус.")
+                finally:
+                    progress_box.empty()
+    doc_tabs = st.tabs(list(HISTORY_FILES.values()) + ["Журнал"])
+    for tab, filename in zip(doc_tabs[:-1], HISTORY_FILES):
+        with tab:
+            try:
+                text = load_run_text(selected_run, filename)
+            except FileNotFoundError:
+                st.info("Файл отсутствует: он не был создан или не сохранился в этом запуске.")
+            except (OSError, ValueError) as exc:
+                st.warning(f"Не удалось открыть {filename}: {exc}")
+            else:
+                st.markdown(text)
+                st.download_button("Скачать файл", data=text, file_name=filename, mime="text/markdown",
+                                   key=f"history_download_{selected_run}_{filename}")
+    with doc_tabs[-1]:
+        try:
+            raw_log = load_run_text(selected_run, "run_log.json")
+        except (OSError, ValueError) as exc:
+            st.warning(f"Журнал недоступен: {exc}")
+        else:
+            try:
+                st.json(json.loads(raw_log))
+            except ValueError:
+                st.warning("Некорректный JSON журнала.")
+                st.text(raw_log)
+            st.download_button("Скачать журнал", data=raw_log, file_name="run_log.json",
+                               mime="application/json", key="history_log_" + selected_run)
+
+
+tab_brief, tab_knowledge, tab_history = st.tabs(
+    ["📋 Бриф проекта", "📚 База знаний", "🕘 История запусков"],
+    key="main_tab",
+    bind="query-params",
+)
+with tab_knowledge:
+    st.subheader("📚 База знаний")
+    st.caption("Подходящие источники автоматически передаются Writer и Reviewer. Отмечать документы не нужно.")
+    if st.session_state.kb_notice:
+        st.success(st.session_state.kb_notice)
+        st.session_state.kb_notice = None
+    with st.form("upload_form", clear_on_submit=True):
+        uploads = st.file_uploader("Добавьте документы", type=["txt", "md"], accept_multiple_files=True)
+        st.caption("Кодировка UTF-8. Файл с тем же именем заменяет прежний. Крестик убирает только вложение из текущей загрузки.")
+        upload_clicked = st.form_submit_button("Сохранить документы", use_container_width=True)
+    if upload_clicked:
+        if not uploads:
+            st.warning("Сначала добавьте файл.")
+        for upload in uploads or []:
+            name = Path(upload.name.replace("\\", "/")).name
+            try:
+                if not name or Path(name).suffix.lower() not in {".txt", ".md"}:
+                    raise ValueError("Допускаются только TXT и MD.")
+                text = upload.getvalue().decode("utf-8-sig")
+                if not text.strip():
+                    raise ValueError("Пустой документ не сохранён.")
+                save_uploaded_file(name, text)
+                st.success(f"Сохранён файл: {name}")
+            except UnicodeDecodeError:
+                st.error(f"Сохраните «{name}» в кодировке UTF-8.")
+            except Exception as exc:
+                st.error(f"Ошибка сохранения «{name}»: {exc}")
+    st.divider()
+    st.subheader("Сохранённые документы")
+    try:
+        files = [Path(p) for p in list_knowledge_files()]
+    except Exception as exc:
+        files = []
+        st.error(f"Ошибка чтения списка: {exc}")
+    file_map = {p.name: p for p in files}
+    if not files:
+        st.info("Документов пока нет.")
+    else:
+        st.caption(f"Документов: {len(files)}")
+        for path in files:
+            title, edit, delete = st.columns([5, 2, 2])
+            title.write(f"📄 {path.name}")
+            edit.button("✏️ Редактировать", key="edit_" + path.name,
+                        on_click=start_edit, args=(path.name,), use_container_width=True)
+            delete.button("🗑️ Удалить", key="delete_" + path.name,
+                          on_click=start_delete, args=(path.name,), use_container_width=True)
+            with st.expander("Посмотреть содержимое: " + path.name):
+                try:
+                    text = path.read_text(encoding="utf-8-sig")
+                    st.text(text[:10000])
+                    if len(text) > 10000:
+                        st.caption("Показаны первые 10 000 символов.")
+                except (OSError, UnicodeError) as exc:
+                    st.warning(f"Не удалось прочитать документ: {exc}")
+
+    editing = st.session_state.kb_edit
+    if editing:
+        st.markdown('<div id="kb-editor-anchor" style="scroll-margin-top:80px;"></div>', unsafe_allow_html=True)
+        st.subheader(f"Редактирование: {editing}")
+        path = file_map.get(editing)
+        if path is None:
+            st.warning("Документ больше не найден.")
+            st.button("Закрыть редактор", on_click=clear_edit)
+        else:
+            try:
+                if "kb_editor_text" not in st.session_state:
+                    st.session_state.kb_editor_text = path.read_text(encoding="utf-8-sig")
+                    st.session_state.kb_edit_version = version(path)
+                st.caption("Сохранение заменяет содержимое файла. Имя остаётся прежним.")
+                with st.form("editor_form"):
+                    edited_text = st.text_area("Содержимое документа", key="kb_editor_text", height=400)
+                    save_clicked = st.form_submit_button("💾 Сохранить изменения", type="primary")
+                st.button("Отмена редактирования", on_click=clear_edit)
+                if save_clicked:
+                    if not edited_text.strip():
+                        st.warning("Нельзя сохранить пустой документ. Для удаления есть отдельная кнопка.")
+                    elif version(path) != st.session_state.kb_edit_version:
+                        st.error("Файл изменился после открытия редактора. Скопируйте свой текст, закройте редактор и откройте документ заново.")
+                    else:
+                        save_uploaded_file(path.name, edited_text)
+                        clear_edit()
+                        st.session_state.kb_notice = f"Изменения сохранены: {path.name}"
+                        st.rerun()
+                if st.session_state.kb_scroll:
+                    scroll_to_editor()
+                    st.session_state.kb_scroll = False
+                st.caption("Если автоматическая прокрутка заблокирована браузером, редактор находится под списком документов.")
+            except Exception as exc:
+                st.error(f"Ошибка редактирования: {exc}")
+
+    if st.session_state.kb_delete:
+        name = st.session_state.kb_delete
+        delete_dialog(name, file_map.get(name))
+
+with tab_brief:
+    st.subheader("Бриф проекта")
+    with st.form("project_form"):
+        project_name = st.text_input("Название проекта *")
+        business_goal = st.text_area("Бизнес-цель *", height=120)
+        target_user = st.text_area("Целевой пользователь")
+        problem = st.text_area("Какая проблема есть сейчас", height=120)
+        desired_result = st.text_area("Какой результат должен получиться", height=120)
+        left, right = st.columns(2)
+        with left:
+            constraints = st.text_area("Ограничения и запреты", height=150)
+        with right:
+            success_criteria = st.text_area("Критерии успеха", height=150)
+        additional = st.text_area("Дополнительный контекст")
+        st.caption("* Обязательные поля. Запуск отправляет запросы к подключённой модели.")
+        submitted = st.form_submit_button("🚀 Отправить проект агентам", type="primary", use_container_width=True)
+    if submitted:
+        if not project_name.strip() or not business_goal.strip():
+            st.error("Заполните название проекта и бизнес-цель.")
+        else:
+            fields = [
+                ("ПРОЕКТ", project_name), ("БИЗНЕС-ЦЕЛЬ", business_goal),
+                ("ЦЕЛЕВОЙ ПОЛЬЗОВАТЕЛЬ", target_user), ("ТЕКУЩАЯ ПРОБЛЕМА", problem),
+                ("ЖЕЛАЕМЫЙ РЕЗУЛЬТАТ", desired_result), ("ОГРАНИЧЕНИЯ", constraints),
+                ("КРИТЕРИИ УСПЕХА", success_criteria), ("ДОПОЛНИТЕЛЬНЫЙ КОНТЕКСТ", additional),
+            ]
+            brief = "\n\n".join(f"{k}:\n{v.strip()}" for k, v in fields if v.strip())
+            st.session_state.result = {}
+            st.session_state.run_dir = None
+            progress_box = st.empty()
+            def remember_folder(folder):
+                st.session_state.run_dir = folder
+            try:
+                outcome = start_project(
+                    brief, project_name.strip(),
+                    progress=lambda n, label: progress_box.info(f"{n}/5 — работает {label}..."),
+                    on_created=remember_folder,
+                )
+                st.session_state.result = outcome["result"]
+                st.session_state.run_dir = outcome["run_dir"]
+                if outcome["status"] == "completed":
+                    st.success("Готово! Документы и журнал сохранены.")
+                else:
+                    st.error(outcome["error"] or "Запуск завершился ошибкой.")
+                    st.warning("Готовые этапы сохранены. Продолжение доступно в истории запусков.")
+            except Exception as exc:
+                st.error(f"Ошибка подготовки или сохранения запуска: {exc}")
+            finally:
+                progress_box.empty()
+    if st.session_state.result:
+        st.divider()
+        st.header("Результаты команды")
+        sections = [
+            ("📋 План", "plan", "01_plan.md"), ("📊 Анализ", "analysis", "02_analysis.md"),
+            ("🏗️ Архитектура", "architecture", "03_architecture.md"),
+            ("📄 Итоговый документ", "document", "04_document.md"),
+            ("🔍 Проверка", "review", "05_review.md"),
+        ]
+        tabs = st.tabs([s[0] for s in sections])
+        for tab, (_, key, filename) in zip(tabs, sections):
+            with tab:
+                text = st.session_state.result.get(key)
+                if text:
+                    st.markdown(text)
+                    st.download_button("Скачать документ", data=text, file_name=filename,
+                                       mime="text/markdown", key="download_" + key, use_container_width=True)
+                else:
+                    st.info("Этот этап ещё не завершён.")
+        if st.session_state.run_dir:
+            st.info(f"Папка результатов: {st.session_state.run_dir}")
+
+        if st.session_state.run_dir and st.session_state.result.get("document"):
+            show_feedback(st.session_state.run_dir)
+
+
+with tab_history:
+    render_history()

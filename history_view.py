@@ -1,0 +1,291 @@
+"""Табличная история: отчёт, ZIP, продолжение и новый запуск."""
+import io
+import json
+import zipfile
+from datetime import datetime, timezone, timedelta
+from functools import partial
+from pathlib import Path
+
+import streamlit as st
+from config import MODEL, TEMPERATURE
+from storage import list_runs, load_run_text, get_run_dir, HISTORY_FILES
+from pipeline import inspect_resume, resume_project, start_project
+
+STAGES = [
+    ("plan", "01_plan.md", "PM"), ("analysis", "02_analysis.md", "Analyst"),
+    ("architecture", "03_architecture.md", "Architect"),
+    ("document", "04_document.md", "Writer"), ("review", "05_review.md", "Reviewer"),
+]
+LABELS = {"completed": "Завершён", "failed": "Ошибка", "running": "Выполняется", "unknown": "Нет статуса"}
+
+
+def run_date(row):
+    try:
+        return datetime.fromisoformat(str(row.get("created_at") or "").replace("Z", "+00:00")).date()
+    except ValueError:
+        try:
+            return datetime.strptime(row['run_id'][4:14], "%Y-%m-%d").date()
+        except (KeyError, ValueError):
+            return None
+
+
+def filtered_runs(rows, query, status, period, today):
+    start = {"Сегодня": today, "Последние 7 дней": today-timedelta(days=6),
+             "Последние 30 дней": today-timedelta(days=29)}.get(period)
+    found = []
+    for row in rows:
+        if query.strip().casefold() not in (row['project_name'] + ' ' + row['run_id']).casefold():
+            continue
+        if status != "Все" and LABELS.get(row['status'], "Нет статуса") != status:
+            continue
+        day = run_date(row)
+        if start is not None and (day is None or not start <= day <= today):
+            continue
+        found.append(row)
+    return sorted(found, key=lambda r: (run_date(r) or datetime.min.date(), r['run_id']), reverse=True)
+
+
+def read_document(run_id, filename):
+    try:
+        return load_run_text(run_id, filename), None
+    except FileNotFoundError:
+        return None, "Файл отсутствует или ещё не создан."
+    except (OSError, ValueError) as exc:
+        return None, f"Не удалось прочитать файл: {exc}"
+
+
+def archive_bytes(run_id):
+    folder = get_run_dir(run_id)
+    buffer = io.BytesIO()
+    included, missing, skipped = [], [], []
+    total, limit = 0, 50 * 1024 * 1024
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+        for name in dict.fromkeys([*HISTORY_FILES, "run_log.json", "00_pipeline.json", "feedback.json"]):
+            path = folder / name
+            if Path(name).name != name or path.is_symlink() or path.resolve().parent != folder.resolve():
+                skipped.append(name)
+                continue
+            if not path.is_file():
+                missing.append(name)
+                continue
+            try:
+                if total + path.stat().st_size > limit:
+                    raise ValueError("Материалы превышают 50 МиБ. Скачайте документы отдельно.")
+                with path.open("rb") as handle:
+                    content = handle.read(limit-total+1)
+                total += len(content)
+                if total > limit:
+                    raise ValueError("Материалы превышают 50 МиБ.")
+                archive.writestr(f"{run_id}/{name}", content)
+                included.append(name)
+            except OSError:
+                skipped.append(name)
+        if not included:
+            raise ValueError("Нет доступных файлов для экспорта.")
+        manifest = {"run_id": run_id, "exported_at": datetime.now(timezone.utc).isoformat(),
+                    "included": included, "missing": missing, "skipped": skipped,
+                    "note": "Может содержать внутренние данные. Не является транзакционным снимком."}
+        archive.writestr(f"{run_id}/export_manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2))
+    return buffer.getvalue()
+
+
+def stage_summary(run_id):
+    complete = []
+    for key, filename, label in STAGES:
+        text, _ = read_document(run_id, filename)
+        complete.append(bool(text and text.strip()))
+    raw, _ = read_document(run_id, "run_log.json")
+    try:
+        log = json.loads(raw) if raw else {}
+        if not isinstance(log, dict):
+            log = {}
+    except ValueError:
+        log = {}
+    stage = log.get("failed_stage") or log.get("current_stage")
+    if not stage:
+        stage = next((key for (key, _, _), done in zip(STAGES, complete) if not done), None)
+    stage_name = next((label for key, _, label in STAGES if key == stage), str(stage or ""))
+    return sum(complete), stage_name
+
+
+def remember_folder(folder):
+    st.session_state.run_dir = folder
+
+
+def finish_outcome(outcome):
+    st.session_state.result = outcome['result']
+    st.session_state.run_dir = outcome['run_dir']
+    if outcome['status'] == 'completed':
+        st.session_state.history_notice = "Запуск завершён: " + Path(outcome['run_dir']).name
+        st.rerun()
+    else:
+        st.error(outcome.get('error') or "Запуск завершился ошибкой.")
+        st.info("Готовые результаты сохранены. Закройте окно и обновите список истории.")
+
+
+def render_report(row):
+    from report_view import render_report_dialog
+    render_report_dialog(row)
+
+
+def render_resume(row):
+    run_id = row['run_id']
+    st.subheader('Продолжить: ' + row['project_name'])
+    try:
+        state = inspect_resume(run_id)
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        st.warning(f'Продолжение недоступно: {exc}')
+        return
+    st.write(f"Будут сохранены {len(state['result'])} готовых этапа из 5. Недостающие этапы выполнятся в той же папке.")
+    st.caption('Модель исходного запуска: ' + state['model'])
+    st.warning('Продолжение отправляет запросы к модели и может расходовать API-квоту.')
+    for warning in state['warnings']:
+        st.warning(warning)
+    acknowledged = False
+    if state['warnings']:
+        acknowledged = st.checkbox('Подтверждаю ограничения старого запуска', key='resume_legacy_' + run_id)
+    if st.button('Подтвердить продолжение', type='primary', key='confirm_resume_' + run_id,
+                 disabled=bool(state['warnings']) and not acknowledged):
+        status = st.empty()
+        try:
+            outcome = resume_project(run_id, acknowledge_legacy=acknowledged,
+                                     progress=lambda n, label: status.info(f'{n}/5 — {label}...'))
+        except Exception as exc:
+            st.error(f'Не удалось продолжить: {exc}')
+        else:
+            finish_outcome(outcome)
+        finally:
+            status.empty()
+
+
+def render_restart(row):
+    run_id = row['run_id']
+    st.subheader('Новый запуск: ' + row['project_name'])
+    brief, error = read_document(run_id, '00_brief.md')
+    if not brief or not brief.strip():
+        st.error(error or 'Сохранённый бриф пуст. Новый запуск невозможен.')
+        return
+    st.write('Будет создана новая папка и заново выполнены все пять агентов. Старый запуск останется без изменений.')
+    st.write(f'Модель нового запуска: {MODEL} · temperature: {TEMPERATURE}')
+    st.caption('Используются сохранённый бриф, текущие инструкции агентов и актуальная база знаний. Это не точное воспроизведение исходного запуска.')
+    st.warning('Полный запуск отправляет новые запросы к модели и может расходовать API-квоту.')
+    with st.expander('Исходный бриф'):
+        st.text(brief)
+    approved = st.checkbox('Подтверждаю новый полный запуск с указанными настройками', key='restart_approved_' + run_id)
+    if st.button('Создать новый запуск', type='primary', key='confirm_restart_' + run_id, disabled=not approved):
+        status = st.empty()
+        st.session_state.result = {}
+        st.session_state.run_dir = None
+        try:
+            outcome = start_project(brief, row['project_name'],
+                                    progress=lambda n, label: status.info(f'{n}/5 — {label}...'),
+                                    on_created=remember_folder)
+        except Exception as exc:
+            st.error(f'Ошибка подготовки нового запуска: {exc}')
+            if st.session_state.run_dir:
+                st.caption('Папка новой попытки: ' + Path(st.session_state.run_dir).name)
+        else:
+            finish_outcome(outcome)
+        finally:
+            status.empty()
+
+
+@st.dialog('Запуск проекта', width='large')
+def open_run(run_id, action='report'):
+    try:
+        row = next((r for r in list_runs() if r['run_id'] == run_id), None)
+    except (OSError, ValueError) as exc:
+        st.error(f'Не удалось прочитать запуск: {exc}')
+        return
+    if row is None:
+        st.warning('Запуск больше не найден.')
+        return
+    if action == 'resume':
+        render_resume(row)
+    elif action == 'restart':
+        render_restart(row)
+    else:
+        render_report(row)
+
+
+def move_page(delta, total):
+    st.session_state.hist_page = min(total, max(1, st.session_state.get('hist_page', 1) + delta))
+
+
+def render_history():
+    st.header('🕘 История запусков')
+    st.caption('Название проекта открывает отчёт. ZIP, продолжение и новый запуск доступны прямо в строке.')
+    if st.session_state.get('history_notice'):
+        st.success(st.session_state.pop('history_notice'))
+    st.button('Обновить список', key='hist_refresh')
+    try:
+        rows = list_runs()
+    except (OSError, ValueError) as exc:
+        st.error(f'Не удалось прочитать историю: {exc}')
+        return
+    if not rows:
+        st.info('Сохранённых запусков пока нет.')
+        return
+    left, right = st.columns([3, 2])
+    with left:
+        query = st.text_input('Поиск по проекту или ID', key='hist_search')
+        period = st.selectbox('Период', ['Все даты', 'Сегодня', 'Последние 7 дней', 'Последние 30 дней'], key='hist_period')
+    with right:
+        status = st.selectbox('Статус', ['Все', 'Завершён', 'Ошибка', 'Выполняется', 'Нет статуса'], key='hist_status')
+        size = st.selectbox('Записей на странице', [25, 50], key='hist_size')
+    found = filtered_runs(rows, query, status, period, datetime.now().date())
+    scope = (query.strip().casefold(), status, period, size)
+    if st.session_state.get('hist_scope') != scope:
+        st.session_state.hist_page = 1
+        st.session_state.hist_scope = scope
+    pages = max(1, (len(found) + size - 1) // size)
+    st.session_state.hist_page = max(1, min(pages, st.session_state.get('hist_page', 1)))
+    if not found:
+        st.info('Нет запусков по выбранным условиям.')
+        return
+    prev, middle, nxt = st.columns([1, 2, 1])
+    prev.button('← Назад', disabled=st.session_state.hist_page <= 1,
+                on_click=move_page, args=(-1, pages), key='hist_prev', use_container_width=True)
+    nxt.button('Вперёд →', disabled=st.session_state.hist_page >= pages,
+               on_click=move_page, args=(1, pages), key='hist_next', use_container_width=True)
+    with middle:
+        page = int(st.number_input('Страница', min_value=1, max_value=pages, step=1, key='hist_page'))
+    offset = (page - 1) * size
+    current = found[offset:offset + size]
+    st.caption(f'Найдено {len(found)} из {len(rows)} · Страница {page} из {pages} · Записи {offset+1}–{offset+len(current)}')
+    st.caption('Даты — из журнала или имени папки. «Сегодня» — дата сервера. Прогресс — число сохранённых непустых результатов пяти агентов.')
+    widths = [1.4, 3.1, 1.7, 0.8, 1.6, 1.0, 1.2, 1.0]
+    headers = st.columns(widths)
+    for column, title in zip(headers, ['Дата', 'Проект / отчёт', 'Статус / этап', 'Готово', 'Модель', 'Архив', 'Продолжить', 'Заново']):
+        column.write(title)
+    st.divider()
+    for row in current:
+        run_id = row['run_id']
+        count, stage = stage_summary(run_id)
+        columns = st.columns(widths)
+        stamp = str(row['created_at'] or run_date(row) or 'Без даты').replace('T', ' ')
+        columns[0].write(stamp[:16])
+        project = str(row['project_name']).replace('\n', ' ')
+        if columns[1].button(project, key='report_' + run_id,
+                             help='Открыть отчёт · ' + run_id, use_container_width=True):
+            open_run(run_id, 'report')
+        state = LABELS.get(row['status'], 'Нет статуса')
+        if row['status'] in {'failed', 'running'} and stage:
+            state += ': ' + stage
+        columns[2].write(state)
+        columns[3].write(f'{count}/5')
+        columns[4].write(str(row['model']).removeprefix('openai/'))
+        columns[5].download_button('ZIP', data=partial(archive_bytes, run_id),
+                                   file_name=run_id + '.zip', mime='application/zip',
+                                   key='zip_' + run_id, on_click='ignore', use_container_width=True,
+                                   help='Скачать все доступные файлы этого запуска')
+        if columns[6].button('Продолжить', key='resume_' + run_id,
+                             disabled=row['status'] == 'completed', use_container_width=True,
+                             help='Выполнить только недостающие этапы в прежней папке'):
+            open_run(run_id, 'resume')
+        if columns[7].button('Заново', key='restart_' + run_id,
+                             disabled=row['status'] == 'running', use_container_width=True,
+                             help='Новый полный запуск по сохранённому брифу, с подтверждением'):
+            open_run(run_id, 'restart')
+    st.caption('ZIP может содержать внутренние данные. Лимит экспорта — 50 МиБ. Не экспортируйте запуск одновременно с его продолжением.')
+    st.caption('«Продолжить» сохраняет готовые этапы. «Заново» создаёт отдельный запуск с текущими настройками. Действия требуют подтверждения.')
