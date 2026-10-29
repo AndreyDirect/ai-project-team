@@ -1,9 +1,14 @@
-"""Облачное хранилище db в Supabase (одна строка JSON в таблице app_state)."""
+"""Облачное хранилище db в Supabase (одна строка JSON в таблице app_state).
+
+Быстрая версия: чтение из Supabase кэшируется на 5 секунд,
+при сетевом сбое — 2 попытки, затем бесшумный переход на локальный JSON.
+"""
 
 from __future__ import annotations
 
 import json
 import os
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -33,32 +38,41 @@ def _get_client():
     return _client
 
 
-def load_db() -> dict:
-    """
-    Читает db из Supabase. Если там пусто — берёт локальный JSON
-    и сразу заливает его в облако (первичная миграция).
-    Если и облака нет — обычный JSON (старое поведение).
-    """
+@st.cache_data(ttl=5, show_spinner=False)
+def _fetch_remote() -> dict | None:
+    """Читает db из Supabase с кэшем на 5 секунд и 2 повторами при сбое сети."""
     client = _get_client()
     if client is None:
-        return _load_local()
+        return None
+    for attempt in range(2):
+        try:
+            row = client.table("app_state").select("data").eq("id", STATE_ID).execute()
+            rows = row.data or []
+            return rows[0]["data"] if rows else None
+        except Exception:
+            if attempt == 0:
+                time.sleep(1)  # пауза и повтор при разрыве соединения
+    return None
 
-    try:
-        row = client.table("app_state").select("data").eq("id", STATE_ID).execute()
-        rows = row.data or []
-        if rows:
-            return rows[0]["data"]
-        # В облаке пусто — мигрируем локальный JSON
-        local = _load_local()
-        save_db(local)
-        return local
-    except Exception as exc:
-        st.warning(f"Не удалось прочитать Supabase, работаем локально: {exc}")
-        return _load_local()
+
+def load_db() -> dict:
+    """
+    Читает db из Supabase (с кэшем). Если там пусто — берёт локальный JSON
+    и сразу заливает его в облако (первичная миграция).
+    Если облако недоступно — работает с локальным JSON без предупреждений.
+    """
+    remote = _fetch_remote()
+    if remote is not None:
+        return remote
+    # В облаке пусто или ошибка сети — мигрируем/читаем локальный JSON
+    local = _load_local()
+    save_db(local)
+    return local
 
 
 def save_db(db: dict) -> None:
     """Сохраняет db в Supabase и (для подстраховки) в локальный JSON."""
+    st.cache_data.clear()  # сброс кэша, чтобы свежие данные сразу были видны
     client = _get_client()
     payload = {
         "id": STATE_ID,

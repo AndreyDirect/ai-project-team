@@ -1,241 +1,241 @@
 {
-  "schema_version": 1,
-  "projects": {
-    "prj_c13ff373e9": {
-      "id": "prj_c13ff373e9",
-      "name": "Тест",
-      "goal": "Тест",
-      "desired_result": "",
-      "constraints": "",
-      "success_criteria": "",
-      "status": "active",
-      "created_at": "2026-10-28T20:38:35.319054+00:00"
-    },
-    "prj_47bae71416": {
-      "id": "prj_47bae71416",
-      "name": "Тест",
-      "goal": "Тест",
-      "desired_result": "",
-      "constraints": "",
-      "success_criteria": "",
-      "status": "active",
-      "created_at": "2026-10-28T20:38:42.488817+00:00"
-    }
-  },
-  "members": {
-    "mem_435f5ffc03": {
-      "id": "mem_435f5ffc03",
-      "name": "AI Analyst",
-      "type": "ai",
-      "role": "Аналитик",
-      "model": "openai/gpt-oss-20b",
-      "instructions": "Собери информацию об ИИ-агентах бизнес-аналитиках, и следуй этой роли.",
-      "profile_version": 1,
-      "status": "active",
-      "created_at": "2026-10-28T20:16:56.460988+00:00"
-    },
-    "mem_5566dc82ac": {
-      "id": "mem_5566dc82ac",
-      "name": "AI Reviewer",
-      "type": "ai",
-      "role": "Ревьюер",
-      "model": "openai/gpt-oss-20b",
-      "instructions": "Собери информацию об ИИ-агентах ревьюирах в ИТ-проектах, и следуй этой роли.",
-      "profile_version": 1,
-      "status": "active",
-      "created_at": "2026-10-28T20:17:42.957881+00:00"
-    },
-    "mem_d8d5762605": {
-      "id": "mem_d8d5762605",
-      "name": "Андрей",
-      "type": "human",
-      "role": "Руководитель продукта",
-      "user_key": "local_admin",
-      "model": "",
-      "instructions": "",
-      "profile_version": 1,
-      "status": "active",
-      "created_at": "2026-10-29T07:58:20.142046+00:00"
-    },
-    "mem_e7c5f3a78a": {
-      "id": "mem_e7c5f3a78a",
-      "name": "AI Analyst",
-      "type": "ai",
-      "role": "Аналитик",
-      "user_key": null,
-      "model": "openai/gpt-oss-20b",
-      "instructions": "Готовь результат строго по задаче и критериям.",
-      "profile_version": 1,
-      "status": "active",
-      "created_at": "2026-10-29T07:58:23.480567+00:00"
-    },
-    "mem_f306b3655c": {
-      "id": "mem_f306b3655c",
-      "name": "Аналитик",
-      "type": "ai",
-      "role": "Аналитик",
-      "user_key": null,
-      "model": "openai/gpt-oss-20b",
-      "instructions": "Готовь результат строго по задаче и критериям.",
-      "profile_version": 1,
-      "status": "active",
-      "created_at": "2026-10-29T08:11:23.403840+00:00"
-    },
-    "mem_06a37d8550": {
-      "id": "mem_06a37d8550",
-      "name": "Тестовый 120b",
-      "type": "ai",
-      "role": "ИИ-тестер",
-      "user_key": null,
-      "model": "openai/gpt-oss-120b",
-      "instructions": "Готовь результат строго по задаче и критериям.",
-      "profile_version": 1,
-      "status": "active",
-      "created_at": "2026-10-29T09:21:42.265025+00:00"
-    }
-  },
   "tasks": {},
-  "artifacts": {},
+  "users": {
+    "local_admin": {
+      "id": "local_admin",
+      "role": "owner",
+      "status": "active",
+      "created_at": "2026-10-28T20:28:02.104739+00:00",
+      "display_name": "Локальный администратор"
+    }
+  },
   "events": [
     {
       "id": "evt_94240b7f45",
+      "name": "AI Analyst",
       "type": "member_created",
-      "created_at": "2026-10-28T20:16:51.038736+00:00",
       "member_id": "mem_78e7497dbf",
-      "name": "AI Analyst"
+      "created_at": "2026-10-28T20:16:51.038736+00:00"
     },
     {
       "id": "evt_3345968e19",
+      "name": "AI Analyst",
       "type": "member_created",
-      "created_at": "2026-10-28T20:16:56.461010+00:00",
       "member_id": "mem_435f5ffc03",
-      "name": "AI Analyst"
+      "created_at": "2026-10-28T20:16:56.461010+00:00"
     },
     {
       "id": "evt_26066a62c0",
+      "name": "AI Reviewer",
       "type": "member_created",
-      "created_at": "2026-10-28T20:17:42.957903+00:00",
       "member_id": "mem_5566dc82ac",
-      "name": "AI Reviewer"
+      "created_at": "2026-10-28T20:17:42.957903+00:00"
     },
     {
       "id": "evt_d77c79fc8d",
+      "name": "Локальный администратор",
       "type": "user_created",
-      "created_at": "2026-10-28T20:28:02.104782+00:00",
       "user_id": "local_admin",
-      "name": "Локальный администратор"
+      "created_at": "2026-10-28T20:28:02.104782+00:00"
     },
     {
       "id": "evt_53e22fc2cf",
+      "name": "AI Analyst",
       "type": "member_deactivated",
-      "created_at": "2026-10-28T20:28:10.275439+00:00",
       "member_id": "mem_78e7497dbf",
-      "name": "AI Analyst"
+      "created_at": "2026-10-28T20:28:10.275439+00:00"
     },
     {
       "id": "evt_219246567e",
+      "name": "Тест",
       "type": "project_created",
       "created_at": "2026-10-28T20:38:35.319080+00:00",
-      "project_id": "prj_c13ff373e9",
-      "name": "Тест"
+      "project_id": "prj_c13ff373e9"
     },
     {
       "id": "evt_ddd1339b3b",
+      "name": "Тест",
       "type": "project_created",
       "created_at": "2026-10-28T20:38:42.488838+00:00",
-      "project_id": "prj_47bae71416",
-      "name": "Тест"
+      "project_id": "prj_47bae71416"
     },
     {
       "id": "evt_6f7d2c2058",
+      "name": "AI Analyst",
       "type": "member_deleted",
-      "created_at": "2026-10-29T07:50:42.239349+00:00",
       "member_id": "mem_78e7497dbf",
-      "name": "AI Analyst"
+      "created_at": "2026-10-29T07:50:42.239349+00:00"
     },
     {
       "id": "evt_f16b75b0e3",
+      "name": "Андрей",
       "type": "human",
-      "created_at": "2026-10-29T07:58:20.142076+00:00",
       "member_id": "mem_d8d5762605",
-      "name": "Андрей"
+      "created_at": "2026-10-29T07:58:20.142076+00:00"
     },
     {
       "id": "evt_f06bfe9cc1",
+      "name": "AI Analyst",
       "type": "ai",
-      "created_at": "2026-10-29T07:58:23.480590+00:00",
       "member_id": "mem_e7c5f3a78a",
-      "name": "AI Analyst"
+      "created_at": "2026-10-29T07:58:23.480590+00:00"
     },
     {
       "id": "evt_0a9a864366",
       "type": "project_member_added",
+      "member_id": "mem_d8d5762605",
       "created_at": "2026-10-29T07:59:40.273768+00:00",
       "project_id": "prj_c13ff373e9",
-      "member_id": "mem_d8d5762605",
       "project_role": "Заказчик"
     },
     {
       "id": "evt_2c2c99d9ec",
+      "name": "Аналитик",
       "type": "ai",
-      "created_at": "2026-10-29T08:11:23.403861+00:00",
       "member_id": "mem_f306b3655c",
-      "name": "Аналитик"
+      "created_at": "2026-10-29T08:11:23.403861+00:00"
     },
     {
       "id": "evt_2224c81076",
       "type": "project_member_added",
+      "member_id": "mem_e7c5f3a78a",
       "created_at": "2026-10-29T08:33:21.692072+00:00",
       "project_id": "prj_47bae71416",
-      "member_id": "mem_e7c5f3a78a",
       "project_role": "Исполнитель"
     },
     {
       "id": "evt_ab621577d4",
       "type": "project_member_added",
+      "member_id": "mem_435f5ffc03",
       "created_at": "2026-10-29T08:33:29.972080+00:00",
       "project_id": "prj_47bae71416",
-      "member_id": "mem_435f5ffc03",
       "project_role": "Исполнитель"
     },
     {
       "id": "evt_b3e6b6768f",
+      "name": "Тестовый 120b",
       "type": "ai",
-      "created_at": "2026-10-29T09:21:42.265049+00:00",
       "member_id": "mem_06a37d8550",
-      "name": "Тестовый 120b"
+      "created_at": "2026-10-29T09:21:42.265049+00:00"
     }
   ],
-  "users": {
-    "local_admin": {
-      "id": "local_admin",
-      "display_name": "Локальный администратор",
-      "role": "owner",
-      "created_at": "2026-10-28T20:28:02.104739+00:00",
-      "status": "active"
+  "members": {
+    "mem_06a37d8550": {
+      "id": "mem_06a37d8550",
+      "name": "Тестовый 120b",
+      "role": "ИИ-тестер",
+      "type": "ai",
+      "model": "openai/gpt-oss-120b",
+      "status": "active",
+      "user_key": null,
+      "created_at": "2026-10-29T09:21:42.265025+00:00",
+      "instructions": "Готовь результат строго по задаче и критериям.",
+      "profile_version": 1
+    },
+    "mem_435f5ffc03": {
+      "id": "mem_435f5ffc03",
+      "name": "AI Analyst",
+      "role": "Аналитик",
+      "type": "ai",
+      "model": "openai/gpt-oss-20b",
+      "status": "active",
+      "created_at": "2026-10-28T20:16:56.460988+00:00",
+      "instructions": "Собери информацию об ИИ-агентах бизнес-аналитиках, и следуй этой роли.",
+      "profile_version": 1
+    },
+    "mem_5566dc82ac": {
+      "id": "mem_5566dc82ac",
+      "name": "AI Reviewer",
+      "role": "Ревьюер",
+      "type": "ai",
+      "model": "openai/gpt-oss-20b",
+      "status": "active",
+      "created_at": "2026-10-28T20:17:42.957881+00:00",
+      "instructions": "Собери информацию об ИИ-агентах ревьюирах в ИТ-проектах, и следуй этой роли.",
+      "profile_version": 1
+    },
+    "mem_d8d5762605": {
+      "id": "mem_d8d5762605",
+      "name": "Андрей",
+      "role": "Руководитель продукта",
+      "type": "human",
+      "model": "",
+      "status": "active",
+      "user_key": "local_admin",
+      "created_at": "2026-10-29T07:58:20.142046+00:00",
+      "instructions": "",
+      "profile_version": 1
+    },
+    "mem_e7c5f3a78a": {
+      "id": "mem_e7c5f3a78a",
+      "name": "AI Analyst",
+      "role": "Аналитик",
+      "type": "ai",
+      "model": "openai/gpt-oss-20b",
+      "status": "active",
+      "user_key": null,
+      "created_at": "2026-10-29T07:58:23.480567+00:00",
+      "instructions": "Готовь результат строго по задаче и критериям.",
+      "profile_version": 1
+    },
+    "mem_f306b3655c": {
+      "id": "mem_f306b3655c",
+      "name": "Аналитик",
+      "role": "Аналитик",
+      "type": "ai",
+      "model": "openai/gpt-oss-20b",
+      "status": "active",
+      "user_key": null,
+      "created_at": "2026-10-29T08:11:23.403840+00:00",
+      "instructions": "Готовь результат строго по задаче и критериям.",
+      "profile_version": 1
     }
   },
+  "projects": {
+    "prj_47bae71416": {
+      "id": "prj_47bae71416",
+      "goal": "Тест",
+      "name": "Тест",
+      "status": "active",
+      "created_at": "2026-10-28T20:38:42.488817+00:00",
+      "constraints": "",
+      "desired_result": "",
+      "success_criteria": ""
+    },
+    "prj_c13ff373e9": {
+      "id": "prj_c13ff373e9",
+      "goal": "Тест",
+      "name": "Тест",
+      "status": "active",
+      "created_at": "2026-10-28T20:38:35.319054+00:00",
+      "constraints": "",
+      "desired_result": "",
+      "success_criteria": ""
+    }
+  },
+  "artifacts": {},
+  "schema_version": 1,
   "project_members": {
-    "prj_c13ff373e9:mem_d8d5762605": {
-      "id": "prj_c13ff373e9:mem_d8d5762605",
-      "project_id": "prj_c13ff373e9",
-      "member_id": "mem_d8d5762605",
-      "project_role": "Заказчик",
-      "added_at": "2026-10-29T07:59:40.273740+00:00"
+    "prj_47bae71416:mem_435f5ffc03": {
+      "id": "prj_47bae71416:mem_435f5ffc03",
+      "added_at": "2026-10-29T08:33:29.972048+00:00",
+      "member_id": "mem_435f5ffc03",
+      "project_id": "prj_47bae71416",
+      "project_role": "Исполнитель"
     },
     "prj_47bae71416:mem_e7c5f3a78a": {
       "id": "prj_47bae71416:mem_e7c5f3a78a",
-      "project_id": "prj_47bae71416",
+      "added_at": "2026-10-29T08:33:21.692038+00:00",
       "member_id": "mem_e7c5f3a78a",
-      "project_role": "Исполнитель",
-      "added_at": "2026-10-29T08:33:21.692038+00:00"
-    },
-    "prj_47bae71416:mem_435f5ffc03": {
-      "id": "prj_47bae71416:mem_435f5ffc03",
       "project_id": "prj_47bae71416",
-      "member_id": "mem_435f5ffc03",
-      "project_role": "Исполнитель",
-      "added_at": "2026-10-29T08:33:29.972048+00:00"
+      "project_role": "Исполнитель"
+    },
+    "prj_c13ff373e9:mem_d8d5762605": {
+      "id": "prj_c13ff373e9:mem_d8d5762605",
+      "added_at": "2026-10-29T07:59:40.273740+00:00",
+      "member_id": "mem_d8d5762605",
+      "project_id": "prj_c13ff373e9",
+      "project_role": "Заказчик"
     }
   }
 }
