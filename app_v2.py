@@ -401,7 +401,10 @@ def compute_kpi(tasks):
                     overdue += 1
             except ValueError:
                 pass
-    on_time = int((total - overdue) / total * 100) if total else 100
+    done_tasks_count = len([t for t in tasks if t["status"] in {"internally_accepted", "customer_approved"}])
+    on_time = int((total - overdue) / total * 100) if total else None
+    if not done_tasks_count:
+        on_time = "—"
     return {"total": total, "done": done, "overdue": overdue, "on_time_pct": on_time}
 
 
@@ -705,9 +708,11 @@ tabs = st.tabs([
 
 with tabs[0]:
     st.subheader("Обзор")
-    dark_toggle = st.toggle("🌙 Тёмная тема (визуальная подсказка)", value=bool(st.session_state.dark_theme), key="dark_theme_toggle")
+    dark_toggle = st.toggle("🌙 Тёмная тема", value=bool(st.session_state.dark_theme), key="dark_theme_toggle")
     st.session_state.dark_theme = dark_toggle
-    st.caption("⌨️ Горячие клавиши: Ctrl+K — поиск, Ctrl+N — новая задача (подсказка, требуется настройка браузера).")
+    if dark_toggle:
+        st.markdown("""<style>.stApp{background-color:#0e1117;color:#fafafa}.stSidebar{background-color:#262730}h1,h2,h3,h4{color:#fafafa}.stMetric{background-color:#262730;border-radius:8px;padding:12px}</style>""", unsafe_allow_html=True)
+    st.caption("⌨️ Горячие клавиши: Ctrl+K — поиск (работает в приложении).")
 
     active_projects = [p for p in db["projects"].values() if p["status"] == "active"]
     todo_tasks = [t for t in db["tasks"].values() if t["status"] in {"todo", "changes_requested"}]
@@ -737,7 +742,7 @@ with tabs[0]:
     if forecast:
         st.info(f"Прогноз завершения всех задач: {forecast.strftime('%d.%m.%Y %H:%M')}")
     else:
-        st.caption("Прогноз пока недоступен: нет завершённых задач.")
+        st.caption("Прогноз появится после завершения минимум 3 задач с указанными датами.")
 
     st.divider()
     st.subheader("Загрузка команды")
@@ -827,8 +832,18 @@ with tabs[0]:
     events = recent_events(db, limit=5)
     if not events:
         st.info("Событий пока нет.")
+    EVENT_LABELS = {
+        "ai": "ИИ-агент выполнил задачу",
+        "project_member_added": "Добавлен участник в проект",
+        "project_created": "Создан проект",
+        "task_created": "Создана задача",
+        "task_completed": "Задача завершена",
+        "project_duplicated": "Создана копия проекта",
+    }
     for item in events:
-        st.write(f"• **{item.get('type', 'Событие')}** — {format_dt(item.get('created_at'))}")
+        label = EVENT_LABELS.get(item.get("type", ""), item.get("type", "Событие"))
+        when = format_dt(item.get("created_at")).replace(" ", "\u00a0")
+        st.markdown(f"• **{label}** — {when}")
 
 with tabs[1]:
     col_title, col_action = st.columns([4, 1])
@@ -908,6 +923,8 @@ with tabs[2]:
         if st.button("Создать проект", type="primary", use_container_width=True, key="create_project_btn"):
             if not p_name.strip() or not p_goal.strip():
                 st.error("Заполните название и цель.")
+            elif any(p["name"].strip().lower() == p_name.strip().lower() for p in db["projects"].values()):
+                st.error(f"Проект с названием «{p_name.strip()}» уже существует. Выберите другое имя.")
             else:
                 new_project = create_project(db, name=p_name, goal=p_goal, desired_result=p_result, constraints=p_constraints, success_criteria=p_criteria)
                 new_project["sla_days"] = int(p_sla)
@@ -1558,8 +1575,17 @@ with tabs[7]:
     events = recent_events(db, limit=100)
     if not events:
         st.info("Событий пока нет.")
+    EVENT_LABELS = {
+        "ai": "ИИ-агент выполнил задачу",
+        "project_member_added": "Добавлен участник в проект",
+        "project_created": "Создан проект",
+        "task_created": "Создана задача",
+        "task_completed": "Задача завершена",
+        "project_duplicated": "Создана копия проекта",
+    }
     for item in events:
-        with st.expander(f"{item.get('type', 'Событие')} — {format_dt(item.get('created_at'))}"):
+        label = EVENT_LABELS.get(item.get("type", ""), item.get("type", "Событие"))
+        with st.expander(f"{label} — {format_dt(item.get('created_at'))}"):
             st.json(item, expanded=False)
 
 RELEASES = [
@@ -1604,6 +1630,11 @@ with tabs[8]:
 
 st.divider()
 st.caption(
-    f"Текущий пользователь: local_admin. Модель по умолчанию: {DEFAULT_GROQ_MODEL}. "
+    "Текущий пользователь: Локальный администратор. "
+    f"Модель по умолчанию: {DEFAULT_GROQ_MODEL}. "
     "Данные: data/project_office.json. Резервные копии: data/backups/."
+)
+st.sidebar.warning(
+    "⚠️ Данные хранятся локально и могут сброситься при обновлении приложения "
+    "на Streamlit Cloud. Для постоянного хранения подключите внешнюю БД."
 )
