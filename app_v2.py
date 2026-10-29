@@ -709,6 +709,43 @@ def edit_project_dialog(project_id):
         st.rerun()
 
 
+@st.cache_data(ttl=60, show_spinner=False)
+def groq_ping(model: str):
+    """Проверка подключения к Groq: ключ и доступность модели (кэш 60 сек)."""
+    import requests
+    key = os.getenv("GROQ_API_KEY", "")
+    if not key:
+        return False, "GROQ_API_KEY не задан в .env"
+    try:
+        r = requests.post(
+            "https://api.groq.com/openai/v1/chat/completions",
+            headers={"Authorization": f"Bearer {key}"},
+            json={"model": model, "messages": [{"role": "user", "content": "ping"}], "max_tokens": 5},
+            timeout=10,
+        )
+        if r.status_code == 200:
+            return True, "подключено"
+        detail = r.text[:120].replace("\n", " ")
+        return False, f"ошибка {r.status_code}: {detail}"
+    except Exception as exc:
+        return False, str(exc)[:120]
+
+
+def show_groq_status():
+    """Индикатор подключения к Groq в сайдбаре: проверяет все модели из списка."""
+    with st.sidebar:
+        with st.expander("🟢 Статус Groq", expanded=False):
+            for model in ALLOWED_GROQ_MODELS:
+                ok, msg = groq_ping(model)
+                if ok:
+                    st.success(f"🟢 {model} — {msg}")
+                else:
+                    st.error(f"🔴 {model} — {msg}")
+            if st.button("🔄 Проверить снова", key="groq_recheck", use_container_width=True):
+                groq_ping.clear()
+                st.rerun()
+
+
 def global_search():
     """Глобальный поиск по проектам, задачам, участникам и базе знаний."""
     with st.sidebar:
@@ -794,6 +831,8 @@ def start_new_chat():
     st.session_state.chat_history = []
     st.session_state.chat_session += 1
     st.session_state.pop("chat_input", None)
+
+show_groq_status()
 
 global_search()
 
