@@ -1640,7 +1640,4 @@ if not os.environ.get("SUPABASE_URL") or not os.environ.get("SUPABASE_SECRET_KEY
     )
 else:
     st.sidebar.success("✅ Данные хранятся в Supabase.")
-st.sidebar.warning(
-    "⚠️ Данные хранятся локально и могут сброситься при обновлении приложения "
-    "на Streamlit Cloud. Для постоянного хранения подключите внешнюю БД."
-)
+
