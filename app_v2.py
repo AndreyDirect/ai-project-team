@@ -31,6 +31,15 @@ from core.models import (
 from cloud_storage import load_db, save_db
 from core.orchestrator import run_autonomous_task
 from knowledge import list_knowledge_files, save_uploaded_file
+
+
+@st.cache_data(ttl=30, show_spinner=False)
+def cached_knowledge_files(include_deleted: bool = False):
+    """Кэш списка документов базы знаний: не читает диск при каждом клике."""
+    try:
+        return list_knowledge_files(include_deleted=include_deleted)
+    except Exception:
+        return []
 from storage import create_run_dir, save_file, save_run_log
 
 try:
@@ -700,10 +709,93 @@ def edit_project_dialog(project_id):
         st.rerun()
 
 
+def global_search():
+    """Глобальный поиск по проектам, задачам, участникам и базе знаний."""
+    with st.sidebar:
+        with st.expander("🔍 Глобальный поиск", expanded=False):
+            query = st.text_input("Что искать?", key="global_search_query", placeholder="Проект, задача, участник, документ...")
+            if not query or len(query.strip()) < 2:
+                st.caption("Введите минимум 2 символа.")
+                return
+            q = query.strip().lower()
+            projects = [p for p in db["projects"].values() if q in p.get("name", "").lower() or q in p.get("goal", "").lower()]
+            tasks = [t for t in db["tasks"].values() if q in t.get("title", "").lower() or q in t.get("description", "").lower()]
+            members = [m for m in db["members"].values() if q in m.get("name", "").lower() or q in m.get("role", "").lower()]
+            try:
+                docs = [d for d in cached_knowledge_files(include_deleted=False) if q in d.get("name", "").lower() or q in d.get("content", "").lower()]
+            except Exception:
+                docs = []
+            st.write(f"**Проекты:** {len(projects)} | **Задачи:** {len(tasks)} | **Участники:** {len(members)} | **Документы:** {len(docs)}")
+            if projects:
+                st.markdown("**📁 Проекты**")
+                for p in projects[:5]:
+                    st.write(f"• {p.get('name', p['id'])}")
+            if tasks:
+                st.markdown("**✅ Задачи**")
+                for t in tasks[:5]:
+                    st.write(f"• {t.get('title', t['id'])} — {t.get('status', '')}")
+            if members:
+                st.markdown("**👥 Участники**")
+                for m in members[:5]:
+                    st.write(f"• {m.get('name', m['id'])} — {m.get('role', '')}")
+            if docs:
+                st.markdown("**📄 Документы**")
+                for d in docs[:5]:
+                    st.write(f"• {d.get('name', '')}")
+            if not (projects or tasks or members or docs):
+                st.info("Ничего не найдено.")
+
+
+def show_onboarding():
+    """Подсказки для первого запуска."""
+    if st.session_state.get("onboarding_done"):
+        return
+    with st.expander("🚀 Быстрый старт — как пользоваться системой", expanded=True):
+        st.markdown(
+            "1. **Команда** — добавьте участников и их роли.\n"
+            "2. **Проекты** — создайте проект, укажите цель и критерии успеха.\n"
+            "3. **Задачи** — заведите задачи, назначьте исполнителей и сроки.\n"
+            "4. **База знаний** — загрузите документы (txt/md), чтобы ИИ мог их использовать.\n"
+            "5. **ИИ-чат** — задавайте вопросы по проектам и задачам.\n\n"
+            "Данные хранятся в Supabase и доступны с любого устройства."
+        )
+        if st.button("Понятно, не показывать больше", key="onboarding_dismiss"):
+            st.session_state.onboarding_done = True
+            st.rerun()
+
+
+def show_notifications():
+    """Уведомления: просроченные и скоро истекающие задачи."""
+    now = datetime.now(timezone.utc)
+    overdue, soon = [], []
+    for t in db["tasks"].values():
+        if t.get("status") in {"customer_approved", "cancelled"}:
+            continue
+        deadline = t.get("deadline")
+        if not deadline:
+            continue
+        try:
+            dl = datetime.fromisoformat(deadline)
+        except Exception:
+            continue
+        if dl.tzinfo is None:
+            dl = dl.replace(tzinfo=timezone.utc)
+        if dl < now:
+            overdue.append(t)
+        elif (dl - now).days <= 3:
+            soon.append(t)
+    if overdue:
+        st.error(f"⏰ Просрочено задач: {len(overdue)}. Откройте вкладку «Задачи» и обновите статусы.")
+    if soon:
+        st.warning(f"📅 В ближайшие 3 дня дедлайн у {len(soon)} задач(и).")
+
+
 def start_new_chat():
     st.session_state.chat_history = []
     st.session_state.chat_session += 1
     st.session_state.pop("chat_input", None)
+
+global_search()
 
 tabs = st.tabs([
     "Обзор", "Команда", "Проекты", "Задачи",
@@ -715,9 +807,11 @@ with tabs[0]:
     dark_toggle = st.toggle("🌙 Тёмная тема", value=bool(st.session_state.dark_theme), key="dark_theme_toggle")
     st.session_state.dark_theme = dark_toggle
     if dark_toggle:
-        st.markdown("""<style>.stApp{background-color:#0e1117;color:#fafafa}.stSidebar{background-color:#262730}h1,h2,h3,h4{color:#fafafa}.stMetric{background-color:#262730;border-radius:8px;padding:12px}</style>""", unsafe_allow_html=True)
-    st.caption("⌨️ Горячие клавиши: Ctrl+K — поиск (работает в приложении).")
-
+        st.markdown("<style>.stApp{background-color:#0e1117;color:#fafafa;color-scheme:dark}.stSidebar{background-color:#262730}h1,h2,h3,h4,h5,h6,p,span,label,li{color:#fafafa !important}.stMetric{background-color:#262730;border-radius:8px;padding:12px}</style>", unsafe_allow_html=True)
+    else:
+        st.markdown("<style>.stApp{background-color:#ffffff;color:#31333f;color-scheme:light}.stSidebar{background-color:#f0f2f6}h1,h2,h3,h4,h5,h6,p,span,label,li{color:#31333f !important}.stMetric{background-color:#f0f2f6;border-radius:8px;padding:12px}</style>", unsafe_allow_html=True)
+    show_onboarding()
+    show_notifications()
     active_projects = [p for p in db["projects"].values() if p["status"] == "active"]
     todo_tasks = [t for t in db["tasks"].values() if t["status"] in {"todo", "changes_requested"}]
     review_tasks = [t for t in db["tasks"].values() if t["status"] == "review"]
@@ -1437,7 +1531,7 @@ with tabs[4]:
     left, right = st.columns([2, 1])
     with left:
         search = st.text_input("🔍 Поиск по документам", key="kb_search")
-        docs = list_knowledge_files(include_deleted=False)
+        docs = cached_knowledge_files(include_deleted=False)
         if search:
             docs = [d for d in docs if search.lower() in d["name"].lower() or search.lower() in d["content"].lower()]
         if not docs:
@@ -1450,6 +1544,7 @@ with tabs[4]:
                 if st.button("🗑️ В корзину", key=f"trash_{doc['name']}"):
                     from knowledge import move_to_trash
                     move_to_trash(doc["name"])
+                    st.cache_data.clear()
                     st.session_state.kb_notice = f"Документ перемещён в корзину: {doc['name']}"
                     st.rerun()
                 st.text(doc["content"][:8000])
@@ -1466,12 +1561,13 @@ with tabs[4]:
                         name = Path(upload.name.replace("\\", "/")).name
                         text = upload.getvalue().decode("utf-8-sig")
                         save_uploaded_file(name, text, author=author)
+                        st.cache_data.clear()
                         st.session_state.kb_notice = f"Документ сохранён: {name}"
                         st.rerun()
                     except Exception as exc:
                         st.error(f"Ошибка: {exc}")
         st.markdown("#### Корзина")
-        trash_docs = [d for d in list_knowledge_files(include_deleted=True) if d["deleted"]]
+        trash_docs = [d for d in cached_knowledge_files(include_deleted=True) if d["deleted"]]
         if not trash_docs:
             st.caption("Корзина пуста.")
         for doc in trash_docs:
@@ -1480,11 +1576,13 @@ with tabs[4]:
             if c2.button("♻️", key=f"restore_{doc['name']}", help="Восстановить"):
                 from knowledge import restore_from_trash
                 restore_from_trash(doc["name"])
+                st.cache_data.clear()
                 st.session_state.kb_notice = f"Восстановлен: {doc['name']}"
                 st.rerun()
             if c3.button("❌", key=f"forever_{doc['name']}", help="Удалить без восстановления"):
                 from knowledge import delete_forever
                 delete_forever(doc["name"])
+                st.cache_data.clear()
                 st.session_state.kb_notice = f"Удалён без восстановления: {doc['name']}"
                 st.rerun()
 
