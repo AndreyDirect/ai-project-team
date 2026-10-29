@@ -1632,11 +1632,13 @@ with tabs[8]:
                 st.write("")
 
 st.divider()
-st.caption(
-    "Текущий пользователь: Локальный администратор. "
-    f"Модель по умолчанию: {DEFAULT_GROQ_MODEL}. "
-    "Данные: data/project_office.json. Резервные копии: data/backups/."
-)
+if not os.environ.get("SUPABASE_URL") or not os.environ.get("SUPABASE_SECRET_KEY"):
+    st.sidebar.warning(
+        "⚠️ Supabase не подключён: данные хранятся локально и могут сброситься "
+        "при обновлении приложения на Streamlit Cloud."
+    )
+else:
+    st.sidebar.success("✅ Данные хранятся в Supabase.")
 st.sidebar.warning(
     "⚠️ Данные хранятся локально и могут сброситься при обновлении приложения "
     "на Streamlit Cloud. Для постоянного хранения подключите внешнюю БД."
