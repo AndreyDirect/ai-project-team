@@ -11,6 +11,8 @@ import csv
 import io
 import json
 import zipfile
+from dotenv import load_dotenv
+load_dotenv()
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -21,10 +23,11 @@ from core.models import (
     PRIORITY_LABELS, TASK_PRIORITIES, activate_member,
     add_member_to_project, add_event, can_delete_member, create_member,
     create_project, create_task, deactivate_member,
-    delete_member, ensure_user, load_db, project_members, recent_events,
-    remove_member_from_project, save_db, update_member, update_project,
+    delete_member, ensure_user, project_members, recent_events,
+    remove_member_from_project, update_member, update_project,
     update_task,
 )
+from cloud_storage import load_db, save_db
 from core.orchestrator import run_autonomous_task
 from knowledge import list_knowledge_files, save_uploaded_file
 from storage import create_run_dir, save_file, save_run_log
